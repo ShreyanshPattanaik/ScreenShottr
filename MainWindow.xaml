@@ -1,0 +1,41 @@
+﻿<Window x:Class="ShottrClone.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:ShottrClone"
+        mc:Ignorable="d"
+        Title="ScreenShottr" Height="600" Width="900"
+        WindowStyle="SingleBorderWindow"
+        AllowsTransparency="False"
+        ResizeMode="CanResize">
+    <DockPanel>
+        <ToolBar DockPanel.Dock="Top">
+            <Button Name="BtnAreaCapture" Content="Area Capture" Margin="2" Click="BtnAreaCapture_Click" />
+            <Button Name="BtnFullScreenCapture" Content="Full Screen Capture" Margin="2" Click="BtnFullScreenCapture_Click" />
+            <Separator />
+            <Button Name="BtnSave" Content="Save" Margin="2" Click="BtnSave_Click" />
+            <Button Name="BtnCopy" Content="Copy" Margin="2" Click="BtnCopy_Click" />
+        </ToolBar>
+        <ToolBar DockPanel.Dock="Top">
+            <ToggleButton Name="BtnSelectorTool" Content="▶" ToolTip="Selector" Margin="2" Click="BtnSelectorTool_Click" />
+            <Button Name="BtnUndo" Content="⎌" ToolTip="Undo" Margin="2" Click="BtnUndo_Click" />
+            <Button Name="BtnRedo" Content="↻" ToolTip="Redo" Margin="2" Click="BtnRedo_Click" />
+            <ToggleButton Name="BtnRectTool" Content="Rectangle" Margin="2" Click="BtnRectTool_Click" />
+            <ToggleButton Name="BtnEllipseTool" Content="Ellipse" Margin="2" Click="BtnEllipseTool_Click" />
+            <ToggleButton Name="BtnArrowTool" Content="Arrow" Margin="2" Click="BtnArrowTool_Click" />
+            <ToggleButton Name="BtnLineTool" Content="Line" Margin="2" Click="BtnLineTool_Click" />
+            <ToggleButton Name="BtnTextTool" Content="Text" Margin="2" Click="BtnTextTool_Click" />
+            <ToggleButton Name="BtnFreehandTool" Content="Freehand" Margin="2" Click="BtnFreehandTool_Click" />
+            <ToggleButton Name="BtnStepTool" Content="Step" Margin="2" Click="BtnStepTool_Click" />
+            <ToggleButton Name="BtnHighlightTool" Content="Highlight" Margin="2" Click="BtnHighlightTool_Click" />
+            <ToggleButton Name="BtnCropTool" Content="Crop" Margin="2" Click="BtnCropTool_Click" />
+        </ToolBar>
+        <Grid>
+            <ScrollViewer Name="ScreenshotScrollViewer" Background="Transparent">
+                <Image Name="ScreenshotImage" Stretch="Uniform" />
+            </ScrollViewer>
+            <Canvas Name="AnnotationCanvas" Background="Transparent" IsHitTestVisible="True" />
+        </Grid>
+    </DockPanel>
+</Window>

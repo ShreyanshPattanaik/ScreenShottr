@@ -1,0 +1,13 @@
+<Window x:Class="ShottrClone.WindowPickerOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="#40000000"
+        Topmost="True"
+        ShowInTaskbar="False"
+        WindowState="Maximized"
+        ResizeMode="NoResize"
+        Title="Pick a Window">
+    <Canvas Name="OverlayCanvas" />
+</Window> 
