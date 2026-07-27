@@ -6,7 +6,24 @@ for macOS.
 ## Current features
 
 - Area capture across the virtual desktop
+- Selected-window capture using the visible Windows frame bounds
 - Full-screen capture
+- Repeat-last-area capture
+- Three-second delayed full-screen capture
+- Notification-area capture menu and background operation
+- Single-instance activation
+- Compact post-capture preview with Copy, Save, Edit, and Close
+- Persistent settings stored under the current Windows user profile
+- Post-capture routing to preview, editor, copy-only, or save-only
+- Automatic copy and automatic save controls
+- Configurable default folder and filename tokens
+- PNG and JPEG output
+- Optional Start with Windows registration
+- Global capture shortcuts:
+  - `Ctrl+Shift+1` — area
+  - `Ctrl+Shift+2` — full screen
+  - `Ctrl+Shift+3` — window
+  - `Ctrl+Shift+4` — repeat area
 - Automatic clipboard copy after capture
 - PNG Save As
 - Rectangle, oval, line, arrow, text, freehand, highlighter, and step annotations
@@ -16,20 +33,16 @@ for macOS.
 - Per-monitor-V2 DPI awareness
 - Visible error messages when capture, copy, or save fails
 
-Window selection and early scrolling-capture helper code exist, but those workflows are
-not yet exposed as finished features.
+Early scrolling-capture helper code exists, but that workflow is not yet exposed as a
+finished feature.
 
 ## Planned features
 
 The detailed feature inventory and phased roadmap are in
 [PRODUCT_FEATURES_AND_PHASE_PLAN.md](PRODUCT_FEATURES_AND_PHASE_PLAN.md).
 
-Near-term work includes:
-
-- Window capture
-- Notification-area controls and global hotkeys
-- Repeat-area and delayed capture
-- Capture preview, auto-save, and persistent settings
+Near-term work includes configurable global hotkeys, which are intentionally deferred
+until a later phase.
 - A production-quality annotation editor
 
 OCR, QR recognition, privacy tools, pinned screenshots, scrolling capture, sharing, and

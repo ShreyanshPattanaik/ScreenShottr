@@ -14,6 +14,14 @@ using System.Windows.Media;
 using System.Windows.Input;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using System.ComponentModel;
+using KeyEventArgs = System.Windows.Input.KeyEventArgs;
+using MouseEventArgs = System.Windows.Input.MouseEventArgs;
+using TextBox = System.Windows.Controls.TextBox;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using MessageBox = System.Windows.MessageBox;
+using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
+using IOPath = System.IO.Path;
 
 namespace ShottrClone;
 
@@ -54,6 +62,21 @@ public partial class MainWindow : Window
     private readonly Stack<HistoryEntry> _redoStack = new();
     private System.Windows.Shapes.Rectangle? _cropRectOverlay;
     private bool _isCropping;
+    private System.Drawing.Rectangle? _lastCaptureRegion;
+    private System.Windows.Forms.NotifyIcon? _trayIcon;
+    private HwndSource? _windowSource;
+    private bool _allowClose;
+    private readonly SettingsService _settingsService = new();
+    private AppSettings _settings;
+    private CapturePreviewWindow? _previewWindow;
+
+    private const int WM_HOTKEY = 0x0312;
+    private const uint MOD_CONTROL = 0x0002;
+    private const uint MOD_SHIFT = 0x0004;
+    private const int HOTKEY_AREA = 1;
+    private const int HOTKEY_FULLSCREEN = 2;
+    private const int HOTKEY_WINDOW = 3;
+    private const int HOTKEY_REPEAT = 4;
 
     private void ResetToolButtons()
     {
@@ -577,18 +600,162 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _settings = _settingsService.Load();
         AnnotationCanvas.MouseLeftButtonDown += AnnotationCanvas_MouseLeftButtonDown;
         AnnotationCanvas.MouseMove += AnnotationCanvas_MouseMove;
         AnnotationCanvas.MouseLeftButtonUp += AnnotationCanvas_MouseLeftButtonUp;
         AnnotationCanvas.KeyDown += AnnotationCanvas_KeyDown;
         AnnotationCanvas.Focusable = true;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
+        SourceInitialized += MainWindow_SourceInitialized;
+        Closing += MainWindow_Closing;
+        InitializeTrayIcon();
         Closed += (_, _) =>
         {
+            UnregisterGlobalHotkeys();
+            _trayIcon?.Dispose();
             _lastScreenshot?.Dispose();
             ClearHistory(_undoStack);
             ClearHistory(_redoStack);
         };
+    }
+
+    private void InitializeTrayIcon()
+    {
+        var menu = new System.Windows.Forms.ContextMenuStrip();
+        menu.Items.Add("Capture area", null, (_, _) => Dispatcher.BeginInvoke(CaptureArea));
+        menu.Items.Add("Capture window", null, (_, _) => Dispatcher.BeginInvoke(CaptureWindow));
+        menu.Items.Add("Capture full screen", null, (_, _) => Dispatcher.BeginInvoke(CaptureFullScreen));
+        menu.Items.Add("Repeat last area", null, (_, _) => Dispatcher.BeginInvoke(RepeatLastArea));
+        menu.Items.Add("Delayed capture (3 seconds)", null, (_, _) => Dispatcher.BeginInvoke(DelayedCapture));
+        menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        menu.Items.Add("Open editor", null, (_, _) => Dispatcher.BeginInvoke(ShowFromTray));
+        menu.Items.Add("Settings…", null, (_, _) => Dispatcher.BeginInvoke(OpenSettings));
+        menu.Items.Add("Quit", null, (_, _) => Dispatcher.BeginInvoke(QuitApplication));
+
+        _trayIcon = new System.Windows.Forms.NotifyIcon
+        {
+            Text = "ScreenShottr",
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!),
+            ContextMenuStrip = menu,
+            Visible = true
+        };
+        _trayIcon.DoubleClick += (_, _) => Dispatcher.BeginInvoke(ShowFromTray);
+    }
+
+    private void MainWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        if (_allowClose)
+            return;
+
+        e.Cancel = true;
+        Hide();
+        _trayIcon?.ShowBalloonTip(
+            1500,
+            "ScreenShottr is still running",
+            "Use the notification-area icon or a capture shortcut.",
+            System.Windows.Forms.ToolTipIcon.Info);
+    }
+
+    private void ShowFromTray()
+    {
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    private void BtnSettings_Click(object sender, RoutedEventArgs e) => OpenSettings();
+
+    private void OpenSettings()
+    {
+        ShowFromTray();
+        var dialog = new SettingsWindow(_settings) { Owner = this };
+        if (dialog.ShowDialog() != true)
+            return;
+
+        try
+        {
+            _settingsService.Save(dialog.Settings);
+            _settings = dialog.Settings.Clone();
+            _trayIcon?.ShowBalloonTip(
+                1200,
+                "Settings saved",
+                "New capture settings will be used immediately.",
+                System.Windows.Forms.ToolTipIcon.Info);
+        }
+        catch (Exception ex)
+        {
+            ShowError("save settings", ex);
+        }
+    }
+
+    private void QuitApplication()
+    {
+        _allowClose = true;
+        _previewWindow?.Close();
+        Close();
+    }
+
+    private void MainWindow_SourceInitialized(object? sender, EventArgs e)
+    {
+        _windowSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+        _windowSource.AddHook(WindowMessageHook);
+
+        RegisterCaptureHotkey(HOTKEY_AREA, 0x31, "Ctrl+Shift+1 (Capture area)");
+        RegisterCaptureHotkey(HOTKEY_FULLSCREEN, 0x32, "Ctrl+Shift+2 (Capture full screen)");
+        RegisterCaptureHotkey(HOTKEY_WINDOW, 0x33, "Ctrl+Shift+3 (Capture window)");
+        RegisterCaptureHotkey(HOTKEY_REPEAT, 0x34, "Ctrl+Shift+4 (Repeat area)");
+    }
+
+    private void RegisterCaptureHotkey(int id, uint key, string label)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (!RegisterHotKey(handle, id, MOD_CONTROL | MOD_SHIFT, key))
+        {
+            _trayIcon?.ShowBalloonTip(
+                2500,
+                "Shortcut unavailable",
+                $"{label} is already in use by another application.",
+                System.Windows.Forms.ToolTipIcon.Warning);
+        }
+    }
+
+    private IntPtr WindowMessageHook(
+        IntPtr hwnd,
+        int message,
+        IntPtr wParam,
+        IntPtr lParam,
+        ref bool handled)
+    {
+        if (message != WM_HOTKEY)
+            return IntPtr.Zero;
+
+        handled = true;
+        switch (wParam.ToInt32())
+        {
+            case HOTKEY_AREA:
+                CaptureArea();
+                break;
+            case HOTKEY_FULLSCREEN:
+                CaptureFullScreen();
+                break;
+            case HOTKEY_WINDOW:
+                CaptureWindow();
+                break;
+            case HOTKEY_REPEAT:
+                RepeatLastArea();
+                break;
+        }
+        return IntPtr.Zero;
+    }
+
+    private void UnregisterGlobalHotkeys()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        foreach (var id in new[] { HOTKEY_AREA, HOTKEY_FULLSCREEN, HOTKEY_WINDOW, HOTKEY_REPEAT })
+            UnregisterHotKey(handle, id);
+        _windowSource?.RemoveHook(WindowMessageHook);
+        _windowSource = null;
     }
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -668,96 +835,325 @@ public partial class MainWindow : Window
 
     // Call CopyScreenshotToClipboard after capture/crop
     private void BtnAreaCapture_Click(object sender, RoutedEventArgs e)
-    {
-        Hide();
-        Dispatcher.BeginInvoke(new Action(() =>
-        {
-            try
-            {
-                var overlay = new AreaSelectionWindow();
-                if (overlay.ShowDialog() == true)
-                {
-                    SetScreenshot(CaptureScreenRegion(overlay.SelectedRegion));
-                    CopyScreenshotToClipboard();
-                }
-            }
-            catch (Exception ex)
-            {
-                ShowError("capture the selected area", ex);
-            }
-            finally
-            {
-                Show();
-                Activate();
-            }
-        }), DispatcherPriority.ApplicationIdle);
-    }
+        => CaptureArea();
+
+    private void BtnWindowCapture_Click(object sender, RoutedEventArgs e)
+        => CaptureWindow();
+
     private void BtnFullScreenCapture_Click(object sender, RoutedEventArgs e)
+        => CaptureFullScreen();
+
+    private void BtnRepeatCapture_Click(object sender, RoutedEventArgs e)
+        => RepeatLastArea();
+
+    private void BtnDelayedCapture_Click(object sender, RoutedEventArgs e)
+        => DelayedCapture();
+
+    private async void CaptureArea()
     {
+        var restoreEditorOnCancel = IsVisible;
+        var completed = false;
         Hide();
-        Dispatcher.BeginInvoke(async () =>
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        try
         {
-            await System.Threading.Tasks.Task.Delay(500); // Increased delay to ensure window is hidden
-            try
+            var overlay = new AreaSelectionWindow();
+            if (overlay.ShowDialog() == true)
             {
-                SetScreenshot(CaptureFullScreenDpiAware());
-                CopyScreenshotToClipboard();
+                _lastCaptureRegion = overlay.SelectedRegion;
+                BtnRepeatCapture.IsEnabled = true;
+                CompleteCapture(CaptureScreenRegion(overlay.SelectedRegion), "Area captured");
+                completed = true;
             }
-            catch (Exception ex)
+        }
+        catch (Exception ex)
+        {
+            ShowError("capture the selected area", ex);
+        }
+        finally
+        {
+            if (!completed && restoreEditorOnCancel)
+                ShowFromTray();
+        }
+    }
+
+    private async void CaptureWindow()
+    {
+        var restoreEditorOnCancel = IsVisible;
+        var completed = false;
+        Hide();
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        try
+        {
+            var overlay = new WindowPickerOverlay();
+            if (overlay.ShowDialog() == true)
             {
-                ShowError("capture the screen", ex);
+                CompleteCapture(
+                    CaptureWindowHandle(overlay.SelectedWindowHandle),
+                    "Window captured");
+                completed = true;
             }
-            finally
-            {
-                Show();
-                Activate();
-            }
-        }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+        }
+        catch (Exception ex)
+        {
+            ShowError("capture the selected window", ex);
+        }
+        finally
+        {
+            if (!completed && restoreEditorOnCancel)
+                ShowFromTray();
+        }
+    }
+
+    private async void CaptureFullScreen()
+    {
+        var restoreEditorOnFailure = IsVisible;
+        var completed = false;
+        Hide();
+        await System.Threading.Tasks.Task.Delay(250);
+        try
+        {
+            CompleteCapture(CaptureFullScreenDpiAware(), "Full screen captured");
+            completed = true;
+        }
+        catch (Exception ex)
+        {
+            ShowError("capture the screen", ex);
+        }
+        finally
+        {
+            if (!completed && restoreEditorOnFailure)
+                ShowFromTray();
+        }
+    }
+
+    private async void RepeatLastArea()
+    {
+        if (_lastCaptureRegion is not { } region)
+        {
+            _trayIcon?.ShowBalloonTip(
+                1800,
+                "No area to repeat",
+                "Capture an area first, then repeat it with Ctrl+Shift+4.",
+                System.Windows.Forms.ToolTipIcon.Info);
+            return;
+        }
+
+        var restoreEditorOnFailure = IsVisible;
+        var completed = false;
+        Hide();
+        await System.Threading.Tasks.Task.Delay(200);
+        try
+        {
+            CompleteCapture(CaptureScreenRegion(region), "Area captured again");
+            completed = true;
+        }
+        catch (Exception ex)
+        {
+            ShowError("repeat the last area capture", ex);
+        }
+        finally
+        {
+            if (!completed && restoreEditorOnFailure)
+                ShowFromTray();
+        }
+    }
+
+    private async void DelayedCapture()
+    {
+        var restoreEditorOnFailure = IsVisible;
+        var completed = false;
+        Hide();
+        _trayIcon?.ShowBalloonTip(
+            1500,
+            "Delayed capture",
+            "Capturing the full screen in 3 seconds.",
+            System.Windows.Forms.ToolTipIcon.Info);
+        await System.Threading.Tasks.Task.Delay(3000);
+        try
+        {
+            CompleteCapture(CaptureFullScreenDpiAware(), "Delayed capture complete");
+            completed = true;
+        }
+        catch (Exception ex)
+        {
+            ShowError("take the delayed screenshot", ex);
+        }
+        finally
+        {
+            if (!completed && restoreEditorOnFailure)
+                ShowFromTray();
+        }
+    }
+
+    private void CompleteCapture(Bitmap bitmap, string notification)
+    {
+        _previewWindow?.Close();
+        SetScreenshot(bitmap);
+        var action = _settings.PostCaptureAction;
+        var copied = _settings.AutoCopy || action == PostCaptureAction.CopyOnly;
+        var saved = _settings.AutoSave || action == PostCaptureAction.SaveOnly;
+        string? savedPath = null;
+
+        if (copied)
+            CopyScreenshotToClipboard();
+        if (saved)
+            savedPath = SaveScreenshotAutomatically();
+
+        switch (action)
+        {
+            case PostCaptureAction.Preview:
+                ShowCapturePreview();
+                break;
+            case PostCaptureAction.Editor:
+                ShowFromTray();
+                break;
+            case PostCaptureAction.CopyOnly:
+            case PostCaptureAction.SaveOnly:
+                Hide();
+                break;
+        }
+
+        var outcomes = new List<string>();
+        if (copied) outcomes.Add("copied");
+        if (savedPath != null) outcomes.Add($"saved to {IOPath.GetFileName(savedPath)}");
+        var suffix = outcomes.Count > 0 ? $" — {string.Join(" and ", outcomes)}." : ".";
+        _trayIcon?.ShowBalloonTip(
+            1200,
+            "ScreenShottr",
+            notification + suffix,
+            System.Windows.Forms.ToolTipIcon.Info);
+    }
+
+    private void ShowCapturePreview()
+    {
+        if (_lastScreenshot == null)
+            return;
+
+        _previewWindow?.Close();
+        using var composite = CreateCompositeBitmap();
+        var preview = BitmapToImageSource(composite);
+        preview.Freeze();
+        _previewWindow = new CapturePreviewWindow(
+            preview,
+            () => RunUserAction("copy the screenshot", CopyScreenshotToClipboard),
+            () => RunUserAction("save the screenshot", SaveScreenshotAs),
+            ShowFromTray);
+        _previewWindow.Closed += (_, _) => _previewWindow = null;
+        _previewWindow.Show();
     }
 
     private void BtnSave_Click(object sender, RoutedEventArgs e)
     {
         if (_lastScreenshot == null) return;
-        try
-        {
-            var dialog = new SaveFileDialog
-            {
-                Filter = "PNG Image|*.png",
-                FileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png"
-            };
-            if (dialog.ShowDialog() == true)
-            {
-                using var composite = CreateCompositeBitmap();
-                composite.Save(dialog.FileName, System.Drawing.Imaging.ImageFormat.Png);
-            }
-        }
-        catch (Exception ex)
-        {
-            ShowError("save the screenshot", ex);
-        }
+        RunUserAction("save the screenshot", SaveScreenshotAs);
     }
 
     private void BtnCopy_Click(object sender, RoutedEventArgs e)
     {
         if (_lastScreenshot == null) return;
+        RunUserAction("copy the screenshot", CopyScreenshotToClipboard);
+    }
+
+    private void RunUserAction(string action, Action operation)
+    {
         try
         {
-            CopyScreenshotToClipboard();
+            operation();
         }
         catch (Exception ex)
         {
-            ShowError("copy the screenshot", ex);
+            ShowError(action, ex);
+        }
+    }
+
+    private string SaveScreenshotAutomatically()
+    {
+        Directory.CreateDirectory(_settings.SaveFolder);
+        var fileName = CaptureFileNaming.BuildFileName(
+            _settings.FileNamePattern,
+            DateTime.Now,
+            _settings.ImageFormat);
+        var path = GetAvailablePath(IOPath.Combine(_settings.SaveFolder, fileName));
+        SaveCompositeBitmap(path, _settings.ImageFormat);
+        return path;
+    }
+
+    private void SaveScreenshotAs()
+    {
+        if (_lastScreenshot == null)
+            return;
+
+        var suggestedName = CaptureFileNaming.BuildFileName(
+            _settings.FileNamePattern,
+            DateTime.Now,
+            _settings.ImageFormat);
+        var isJpeg = _settings.ImageFormat == "jpg";
+        var dialog = new SaveFileDialog
+        {
+            Filter = "PNG Image|*.png|JPEG Image|*.jpg;*.jpeg",
+            FilterIndex = isJpeg ? 2 : 1,
+            DefaultExt = isJpeg ? ".jpg" : ".png",
+            AddExtension = true,
+            InitialDirectory = Directory.Exists(_settings.SaveFolder)
+                ? _settings.SaveFolder
+                : null,
+            FileName = suggestedName
+        };
+        if (dialog.ShowDialog() != true)
+            return;
+
+        var format = string.Equals(IOPath.GetExtension(dialog.FileName), ".png", StringComparison.OrdinalIgnoreCase)
+            ? "png"
+            : "jpg";
+        SaveCompositeBitmap(dialog.FileName, format);
+    }
+
+    private void SaveCompositeBitmap(string path, string format)
+    {
+        using var composite = CreateCompositeBitmap();
+        composite.Save(
+            path,
+            format == "jpg"
+                ? System.Drawing.Imaging.ImageFormat.Jpeg
+                : System.Drawing.Imaging.ImageFormat.Png);
+    }
+
+    private static string GetAvailablePath(string path)
+    {
+        if (!File.Exists(path))
+            return path;
+
+        var directory = IOPath.GetDirectoryName(path) ?? string.Empty;
+        var stem = IOPath.GetFileNameWithoutExtension(path);
+        var extension = IOPath.GetExtension(path);
+        for (var index = 2; ; index++)
+        {
+            var candidate = IOPath.Combine(directory, $"{stem}_{index}{extension}");
+            if (!File.Exists(candidate))
+                return candidate;
         }
     }
 
     private void ShowError(string action, Exception exception)
     {
-        MessageBox.Show(
-            this,
-            $"ScreenShottr could not {action}.\n\n{exception.Message}",
-            "ScreenShottr",
-            MessageBoxButton.OK,
-            MessageBoxImage.Error);
+        if (IsVisible)
+        {
+            MessageBox.Show(
+                this,
+                $"ScreenShottr could not {action}.\n\n{exception.Message}",
+                "ScreenShottr",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        else
+        {
+            MessageBox.Show(
+                $"ScreenShottr could not {action}.\n\n{exception.Message}",
+                "ScreenShottr",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
 
     private void SetScreenshot(Bitmap bitmap)
@@ -840,12 +1236,27 @@ public partial class MainWindow : Window
         return bmp;
     }
 
-    private Bitmap CaptureActiveWindow()
+    private Bitmap CaptureWindowHandle(IntPtr handle)
     {
-        IntPtr handle = GetForegroundWindow();
-        GetWindowRect(handle, out RECT rect);
+        if (handle == IntPtr.Zero)
+            throw new InvalidOperationException("No window was selected.");
+
+        RECT rect;
+        if (DwmGetWindowAttribute(
+                handle,
+                DWMWA_EXTENDED_FRAME_BOUNDS,
+                out rect,
+                Marshal.SizeOf<RECT>()) != 0)
+        {
+            if (!GetWindowRect(handle, out rect))
+                throw new InvalidOperationException("Windows could not read the selected window bounds.");
+        }
+
         var width = rect.Right - rect.Left;
         var height = rect.Bottom - rect.Top;
+        if (width <= 0 || height <= 0)
+            throw new InvalidOperationException("The selected window has no visible capture area.");
+
         var bmp = new Bitmap(width, height);
         using (var g = Graphics.FromImage(bmp))
         {
@@ -870,14 +1281,25 @@ public partial class MainWindow : Window
 
     // --- Interop for active window ---
     [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(
+        IntPtr hwnd,
+        int attribute,
+        out RECT value,
+        int valueSize);
 
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int nIndex);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint virtualKey);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
     private const int SM_XVIRTUALSCREEN = 76;
     private const int SM_YVIRTUALSCREEN = 77;
     private const int SM_CXVIRTUALSCREEN = 78;

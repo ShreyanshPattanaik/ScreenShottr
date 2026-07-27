@@ -49,8 +49,11 @@ prototype with one editor window and separate area/window selection overlays.
 | Select/move/delete annotations | **Partial** | Selection, movement, double-click text editing, grouped markers, and Delete work. No resize handles, rotation, multi-select, or snapping yet. |
 | Undo/redo | **Added** | Covers annotation creation, deletion, movement, text edits, and crop undo/redo. Resize history will be added when resize handles exist. |
 | Annotation compositing | **Added** | Save/copy flattens the current WPF annotation canvas onto the screenshot. |
-| Window selection overlay | **Partial** | Window enumeration and hover selection exist, but there is no button or capture flow using it. |
-| Active-window capture helper | **Partial** | A private capture method exists but is unreachable from the UI. |
+| Window capture | **Added** | Window enumeration, hover selection, mixed-DPI overlay conversion, and DWM visible-frame capture are wired into the editor, tray menu, and global shortcut. |
+| Repeat and delayed capture | **Added** | The last physical area can be captured again; delayed capture takes the full virtual screen after three seconds. |
+| Notification-area operation | **Added** | Capture commands, reopen, and quit are available while the editor is hidden. |
+| Global capture shortcuts | **Partial** | Fixed shortcuts cover area, full screen, window, and repeat capture. Shortcut customization is not implemented yet. |
+| Single-instance behavior | **Added** | A second launch signals the existing instance and brings its editor forward. |
 | Scrolling-capture helpers | **Partial** | Bitmap comparison, vertical stitching, and Page Down injection exist, but there is no capture loop, overlap detection, target selection, failure handling, or UI entry point. |
 
 ### Items claimed by the README but not currently implemented
@@ -58,7 +61,6 @@ prototype with one editor window and separate area/window selection overlays.
 The README should be treated as a vision list rather than current functionality. No
 working implementation was found for:
 
-- Delayed capture or repeat-area capture
 - Production scrolling capture
 - Pixelate, blur, erase, or text-only privacy modes
 - Spotlight
@@ -67,7 +69,7 @@ working implementation was found for:
 - Color picker, color formats, contrast checking, OKLCH, or APCA
 - OCR or QR recognition
 - Pinned screenshots or preview thumbnails
-- Global/customizable hotkeys
+- Customizable hotkeys
 - Auto-save settings, configurable filenames, or default save folder
 - Opening files, loading from clipboard, drag-and-drop, or Windows “Open with”
 - Sharing/upload, S3, upload management, or public links
@@ -402,6 +404,9 @@ Exit criteria:
 
 Goal: make the app useful as a daily Windows capture replacement.
 
+Status: **Implemented**, except customizable shortcut assignment, which is intentionally
+deferred. Fixed shortcuts remain available for the four primary capture actions.
+
 - Add a notification-area icon and capture menu.
 - Add single-instance behavior.
 - Wire window capture to the existing window picker and capture helper.
@@ -424,22 +429,102 @@ Exit criteria:
 
 Goal: reach a polished core editor before advanced imaging features.
 
-- Replace text toolbar buttons with a compact icon toolbar and accessible tooltips.
-- Add selection handles, resize, keyboard nudge, grouping, duplication, and layer order.
-- Add color, thickness, fill, opacity, and line-style controls.
+#### Phase 2A — Canvas foundation
+
+Goal: make navigation and coordinate handling reliable before expanding the editor.
+
+- Introduce a proper zoomable canvas and viewport model.
+- Add zoom in/out, 100%, fit, selection zoom, and smooth mouse-wheel zoom.
+- Add right-button and Space+drag panning.
+- Keep capture pixels, annotations, hit testing, crop regions, and exported output in
+  the same coordinate system at every zoom level.
+- Add robust crop and Reset Crop.
+- Add image resize with correct aspect-ratio and DPI handling.
+- Extend history so canvas and image operations are undoable and redoable.
+
+Exit criteria:
+
+- Existing annotations behave identically from minimum to maximum zoom.
+- Crop, resize, copy, and save use image coordinates rather than window coordinates.
+- Canvas operations do not change exported pixels unless the user requested an edit.
+
+#### Phase 2B — Object manipulation
+
+Goal: make every existing annotation behave like a professional editable object.
+
+- Add visible selection and resize handles.
+- Add pixel-level keyboard movement and larger Shift increments.
+- Add annotation duplication, copy, and paste.
+- Add bring forward, send backward, bring to front, and send to back.
+- Add multi-selection and grouping.
+- Add optional snapping and alignment guides.
+- Ensure compound tools remain single logical objects.
+- Add undo/redo for movement, resize, duplication, grouping, and layer changes.
+
+Exit criteria:
+
+- Every annotation can be selected, moved, resized, duplicated, reordered, and deleted.
+- Multi-object operations create one predictable history entry.
+- Object manipulation remains accurate at every zoom level.
+
+#### Phase 2C — Annotation capabilities and styling
+
+Goal: complete tool behavior and expose a stable styling model before redesigning UI.
+
+- Add color, stroke thickness, fill, opacity, and line-style properties.
+- Add text size and appearance controls.
 - Finish rectangle, oval, line, arrow, text, freehand, highlighter, spotlight, and step
-  counter.
-- Add curved arrows and optional hand-drawn styles.
-- Add zoom, 100%, fit, pan, and selection zoom.
-- Add file open, clipboard load, drag-and-drop, and Windows “Open with.”
-- Add robust crop/reset crop and image resize.
-- Add copy-selection and rasterize.
+  counter behavior.
+- Add arrowhead choices and curved arrows.
+- Add adjustable highlighter opacity and spotlight darkness.
+- Add optional hand-drawn styles.
+- Make style changes undoable and reusable as defaults for the next annotation.
+
+Exit criteria:
+
+- Every supported property updates selected objects immediately.
+- New objects inherit the current tool defaults consistently.
+- Copy/save output matches styled objects in the editor pixel-for-pixel.
+
+#### Phase 2D — File and image workflows
+
+Goal: make the editor useful with images that were not captured in the current session.
+
+- Open PNG and JPEG files.
+- Load an image from the clipboard.
+- Support drag-and-drop into and out of the editor.
+- Add Windows “Open with ScreenShottr” integration.
+- Copy only the selected image region.
+- Rasterize annotations into the base image.
+- Preserve dimensions, DPI, transparency, and output format where appropriate.
+
+Exit criteria:
+
+- Disk, clipboard, drag-and-drop, and capture inputs enter the same editor pipeline.
+- Rasterization is undoable and produces deterministic output.
+- Opened images can be edited, copied, and saved without losing expected metadata.
+
+#### Phase 2E — Editor UI and visual polish
+
+Goal: apply the visible redesign only after canvas, object, tool, and file contracts are
+stable.
+
+- Replace text-heavy toolbar buttons with a compact icon toolbar.
+- Add accessible names, tooltips, shortcut hints, and keyboard navigation.
+- Add a contextual properties panel for the selected tool or object.
+- Add clear selection, hover, snapping, and disabled states.
+- Improve empty canvas, loading, error, and unsupported-file states.
+- Make the layout adapt to window size and 100–200% display scaling.
+- Apply consistent spacing, typography, colors, icons, and Windows 11 interaction
+  patterns.
+- Run an accessibility and contrast review.
 
 Exit criteria:
 
 - Every edit is undoable/redoable.
 - Tools behave correctly at different zoom levels.
 - Copy/save output matches the editor preview pixel-for-pixel.
+- The UI remains usable by keyboard and at supported Windows display scales.
 
 ### Phase 3 — Privacy and inspection toolkit
 

@@ -12,10 +12,14 @@
     <DockPanel>
         <ToolBar DockPanel.Dock="Top">
             <Button Name="BtnAreaCapture" Content="Area Capture" Margin="2" Click="BtnAreaCapture_Click" />
+            <Button Name="BtnWindowCapture" Content="Window Capture" Margin="2" Click="BtnWindowCapture_Click" />
             <Button Name="BtnFullScreenCapture" Content="Full Screen Capture" Margin="2" Click="BtnFullScreenCapture_Click" />
+            <Button Name="BtnRepeatCapture" Content="Repeat Area" Margin="2" Click="BtnRepeatCapture_Click" IsEnabled="False" />
+            <Button Name="BtnDelayedCapture" Content="Delayed (3s)" Margin="2" Click="BtnDelayedCapture_Click" />
             <Separator />
             <Button Name="BtnSave" Content="Save" Margin="2" Click="BtnSave_Click" />
             <Button Name="BtnCopy" Content="Copy" Margin="2" Click="BtnCopy_Click" />
+            <Button Name="BtnSettings" Content="Settings" Margin="2" Click="BtnSettings_Click" />
         </ToolBar>
         <ToolBar DockPanel.Dock="Top">
             <ToggleButton Name="BtnSelectorTool" Content="▶" ToolTip="Selector" Margin="2" Click="BtnSelectorTool_Click" />
