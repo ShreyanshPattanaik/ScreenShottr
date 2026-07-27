@@ -6,10 +6,10 @@
         Background="#40000000"
         Topmost="True"
         ShowInTaskbar="False"
-        WindowState="Maximized"
+        WindowStartupLocation="Manual"
         ResizeMode="NoResize"
         Title="Area Selection">
     <Canvas Name="SelectionCanvas">
         <Rectangle Name="SelectionRectangle" Stroke="DodgerBlue" StrokeThickness="2" Fill="#40C0E8FF" Visibility="Collapsed" />
     </Canvas>
-</Window> 
+</Window>

@@ -1,8 +1,5 @@
 using System.Windows;
 using System.Windows.Input;
-using System.Windows.Shapes;
-using System.Windows.Media;
-using System.Drawing;
 using System.Windows.Controls;
 
 namespace ShottrClone
@@ -12,11 +9,15 @@ namespace ShottrClone
         private System.Windows.Point _startPoint;
         private System.Windows.Point _endPoint;
         public System.Drawing.Rectangle SelectedRegion { get; private set; }
-        private bool _isSelecting = false;
+        private bool _isSelecting;
 
         public AreaSelectionWindow()
         {
             InitializeComponent();
+            Left = SystemParameters.VirtualScreenLeft;
+            Top = SystemParameters.VirtualScreenTop;
+            Width = SystemParameters.VirtualScreenWidth;
+            Height = SystemParameters.VirtualScreenHeight;
             MouseLeftButtonDown += AreaSelectionWindow_MouseLeftButtonDown;
             MouseMove += AreaSelectionWindow_MouseMove;
             MouseLeftButtonUp += AreaSelectionWindow_MouseLeftButtonUp;
@@ -72,6 +73,12 @@ namespace ShottrClone
             int py = (int)(y * dpiY);
             int pw = (int)(w * dpiX);
             int ph = (int)(h * dpiY);
+            if (pw < 1 || ph < 1)
+            {
+                SelectionRectangle.Visibility = Visibility.Collapsed;
+                return;
+            }
+
             SelectedRegion = new System.Drawing.Rectangle(px, py, pw, ph);
             DialogResult = true;
             Close();
@@ -86,4 +93,4 @@ namespace ShottrClone
             }
         }
     }
-} 
+}

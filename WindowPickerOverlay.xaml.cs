@@ -13,12 +13,16 @@ namespace ShottrClone
     public partial class WindowPickerOverlay : Window
     {
         public IntPtr SelectedWindowHandle { get; private set; }
-        private List<(IntPtr hWnd, Rect rect, Rectangle shape)> _windowRects = new();
-        private Rectangle _highlightRect;
+        private readonly List<(IntPtr hWnd, Rect rect, Rectangle shape)> _windowRects = [];
+        private Rectangle? _highlightRect;
 
         public WindowPickerOverlay()
         {
             InitializeComponent();
+            Left = SystemParameters.VirtualScreenLeft;
+            Top = SystemParameters.VirtualScreenTop;
+            Width = SystemParameters.VirtualScreenWidth;
+            Height = SystemParameters.VirtualScreenHeight;
             Loaded += WindowPickerOverlay_Loaded;
             MouseMove += WindowPickerOverlay_MouseMove;
             MouseLeftButtonDown += WindowPickerOverlay_MouseLeftButtonDown;
@@ -43,7 +47,11 @@ namespace ShottrClone
                 if (pid == Process.GetCurrentProcess().Id) return true;
                 GetWindowRect(hWnd, out RECT rect);
                 if (rect.Right - rect.Left < 50 || rect.Bottom - rect.Top < 50) return true; // skip tiny windows
-                var r = new Rect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+                var r = new Rect(
+                    rect.Left - SystemParameters.VirtualScreenLeft,
+                    rect.Top - SystemParameters.VirtualScreenTop,
+                    rect.Right - rect.Left,
+                    rect.Bottom - rect.Top);
                 var shape = new Rectangle
                 {
                     Width = r.Width,
@@ -64,8 +72,8 @@ namespace ShottrClone
         private void WindowPickerOverlay_MouseMove(object sender, MouseEventArgs e)
         {
             var pos = e.GetPosition(this);
-            Rectangle hovered = null;
-            foreach (var (hWnd, rect, shape) in _windowRects)
+            Rectangle? hovered = null;
+            foreach (var (_, rect, shape) in _windowRects)
             {
                 if (rect.Contains(pos))
                 {
@@ -80,12 +88,16 @@ namespace ShottrClone
                 hovered.Stroke = Brushes.Orange;
                 _highlightRect = hovered;
             }
+            else
+            {
+                _highlightRect = null;
+            }
         }
 
         private void WindowPickerOverlay_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             var pos = e.GetPosition(this);
-            foreach (var (hWnd, rect, shape) in _windowRects)
+            foreach (var (hWnd, rect, _) in _windowRects)
             {
                 if (rect.Contains(pos))
                 {
@@ -119,4 +131,4 @@ namespace ShottrClone
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT { public int Left, Top, Right, Bottom; }
     }
-} 
+}
