@@ -44,10 +44,10 @@ prototype with one editor window and separate area/window selection overlays.
 | Text | **Added** | Create and edit bold black text. |
 | Freehand | **Added** | Fixed red polyline. |
 | Highlighter | **Added** | Fixed translucent yellow rectangle. |
-| Step counter | **Partial** | Creates numbered markers, but circle and number are separate objects; selection, deletion, undo, and movement can treat them inconsistently. |
+| Step counter | **Added** | Creates a numbered marker as one logical editor object so selection, movement, deletion, undo, and redo stay consistent. |
 | Crop | **Added** | Drag a crop region and press `Enter`; crop is copied automatically. It clears annotations and has incomplete redo behavior. |
-| Select/move/delete annotations | **Partial** | Basic selection, movement, double-click text editing, and Delete work. No resize handles, rotation, multi-select, snapping, or reliable grouping. |
-| Undo/redo | **Partial** | Covers basic add/delete and crop undo. Movement and text edits are not tracked; crop redo is missing; compound objects are fragile. |
+| Select/move/delete annotations | **Partial** | Selection, movement, double-click text editing, grouped markers, and Delete work. No resize handles, rotation, multi-select, or snapping yet. |
+| Undo/redo | **Added** | Covers annotation creation, deletion, movement, text edits, and crop undo/redo. Resize history will be added when resize handles exist. |
 | Annotation compositing | **Added** | Save/copy flattens the current WPF annotation canvas onto the screenshot. |
 | Window selection overlay | **Partial** | Window enumeration and hover selection exist, but there is no button or capture flow using it. |
 | Active-window capture helper | **Partial** | A private capture method exists but is unreachable from the UI. |

@@ -23,24 +23,35 @@ namespace ShottrClone;
 public partial class MainWindow : Window
 {
     private enum AnnotationTool { None, Rectangle, Ellipse, Arrow, Line, Text, Freehand, Step, Highlight, Crop }
+
+    private sealed class HistoryEntry(Action undo, Action redo, params IDisposable[] resources) : IDisposable
+    {
+        public void Undo() => undo();
+        public void Redo() => redo();
+
+        public void Dispose()
+        {
+            foreach (var resource in resources)
+                resource.Dispose();
+        }
+    }
+
     private AnnotationTool _currentTool = AnnotationTool.None;
     private Shape? _currentShape;
     private Polyline? _currentPolyline;
     private System.Windows.Point _startPoint;
     private readonly List<UIElement> _annotations = [];
-    private readonly HashSet<Line> _arrowLines = [];
-    private Line? _currentArrow;
+    private System.Windows.Shapes.Path? _currentArrow;
     private Ellipse? _currentEllipse;
     private int _stepCounter = 1;
     private Line? _currentLine;
     private UIElement? _selectedElement;
-    private System.Windows.Point _dragStartPoint;
-    private bool _isDragging = false;
+    private System.Windows.Point _elementPositionBeforeDrag;
     private UIElement? _selectorDownElement;
     private System.Windows.Point _selectorDownPoint;
     private bool _selectorDragStarted = false;
-    private readonly Stack<(string action, UIElement? element, object? extra)> _undoStack = new();
-    private readonly Stack<(string action, UIElement? element, object? extra)> _redoStack = new();
+    private readonly Stack<HistoryEntry> _undoStack = new();
+    private readonly Stack<HistoryEntry> _redoStack = new();
     private System.Windows.Shapes.Rectangle? _cropRectOverlay;
     private bool _isCropping;
 
@@ -105,15 +116,14 @@ public partial class MainWindow : Window
         if (_currentTool == AnnotationTool.None) // Selector tool
         {
             var pos = e.GetPosition(AnnotationCanvas);
-            var hit = AnnotationCanvas.InputHitTest(pos) as UIElement;
+            var hit = FindAnnotationElement(AnnotationCanvas.InputHitTest(pos) as DependencyObject);
             _selectorDownElement = hit;
             _selectorDownPoint = pos;
             _selectorDragStarted = false;
             if (hit != null && _annotations.Contains(hit))
             {
                 SelectElement(hit);
-                _dragStartPoint = pos;
-                _isDragging = false;
+                _elementPositionBeforeDrag = GetElementPosition(hit);
                 AnnotationCanvas.CaptureMouse();
             }
             else
@@ -159,18 +169,15 @@ public partial class MainWindow : Window
         else if (_currentTool == AnnotationTool.Arrow)
         {
             _startPoint = e.GetPosition(AnnotationCanvas);
-            var line = new Line
+            var arrow = new System.Windows.Shapes.Path
             {
                 Stroke = System.Windows.Media.Brushes.Red,
                 StrokeThickness = 2,
-                X1 = _startPoint.X,
-                Y1 = _startPoint.Y,
-                X2 = _startPoint.X,
-                Y2 = _startPoint.Y
+                Fill = System.Windows.Media.Brushes.Red
             };
-            _currentArrow = line;
-            _arrowLines.Add(line);
-            AddAnnotation(line);
+            _currentArrow = arrow;
+            UpdateArrowGeometry(arrow, _startPoint, _startPoint);
+            AddAnnotation(arrow);
             AnnotationCanvas.CaptureMouse();
         }
         else if (_currentTool == AnnotationTool.Line)
@@ -200,12 +207,27 @@ public partial class MainWindow : Window
                 FontWeight = FontWeights.Bold,
                 BorderThickness = new Thickness(0),
                 Background = System.Windows.Media.Brushes.Transparent,
-                MinWidth = 40
+                MinWidth = 40,
+                AcceptsReturn = false,
+                Tag = "Text"
             };
             System.Windows.Controls.Canvas.SetLeft(textBox, pos.X);
             System.Windows.Controls.Canvas.SetTop(textBox, pos.Y);
-            textBox.LostFocus += (s, ev) => ConvertTextBoxToTextBlock(textBox);
-            textBox.KeyDown += (s, ev) => { if (ev.Key == Key.Enter) ConvertTextBoxToTextBlock(textBox); };
+            textBox.LostFocus += (_, _) => CommitTextEdit(textBox);
+            textBox.KeyDown += (_, ev) =>
+            {
+                if (ev.Key == Key.Enter)
+                {
+                    CommitTextEdit(textBox);
+                    AnnotationCanvas.Focus();
+                    ev.Handled = true;
+                }
+            };
+            textBox.MouseDoubleClick += (_, ev) =>
+            {
+                BeginTextEdit(textBox);
+                ev.Handled = true;
+            };
             AddAnnotation(textBox);
             textBox.Focus();
             textBox.SelectAll();
@@ -213,14 +235,17 @@ public partial class MainWindow : Window
         else if (_currentTool == AnnotationTool.Step)
         {
             var pos = e.GetPosition(AnnotationCanvas);
-            var circle = new Ellipse
+            var marker = new Grid
             {
                 Width = 32,
-                Height = 32,
+                Height = 32
+            };
+            marker.Children.Add(new Ellipse
+            {
                 Fill = System.Windows.Media.Brushes.Gold,
                 Stroke = System.Windows.Media.Brushes.DarkGoldenrod,
                 StrokeThickness = 2
-            };
+            });
             var label = new TextBlock
             {
                 Text = _stepCounter.ToString(),
@@ -228,14 +253,13 @@ public partial class MainWindow : Window
                 FontSize = 18,
                 Foreground = System.Windows.Media.Brushes.Black,
                 HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false
             };
-            System.Windows.Controls.Canvas.SetLeft(circle, pos.X - 16);
-            System.Windows.Controls.Canvas.SetTop(circle, pos.Y - 16);
-            System.Windows.Controls.Canvas.SetLeft(label, pos.X - 8);
-            System.Windows.Controls.Canvas.SetTop(label, pos.Y - 12);
-            AddAnnotation(circle);
-            AddAnnotation(label);
+            marker.Children.Add(label);
+            System.Windows.Controls.Canvas.SetLeft(marker, pos.X - 16);
+            System.Windows.Controls.Canvas.SetTop(marker, pos.Y - 16);
+            AddAnnotation(marker);
             _stepCounter++;
         }
         else if (_currentTool == AnnotationTool.Highlight)
@@ -301,70 +325,19 @@ public partial class MainWindow : Window
             if (!_selectorDragStarted && (Math.Abs(dx) > 3 || Math.Abs(dy) > 3))
             {
                 _selectorDragStarted = true;
-                _isDragging = true;
             }
             if (_selectorDragStarted && _selectedElement != null)
             {
-                _dragStartPoint = pos;
                 double left = System.Windows.Controls.Canvas.GetLeft(_selectedElement);
                 double top = System.Windows.Controls.Canvas.GetTop(_selectedElement);
                 if (double.IsNaN(left)) left = 0;
                 if (double.IsNaN(top)) top = 0;
                 System.Windows.Controls.Canvas.SetLeft(_selectedElement, left + dx);
                 System.Windows.Controls.Canvas.SetTop(_selectedElement, top + dy);
-                // Move paired label for step tool
-                if (_selectedElement is Ellipse)
-                {
-                    foreach (var el in _annotations)
-                    {
-                        if (el is TextBlock lbl)
-                        {
-                            double l = System.Windows.Controls.Canvas.GetLeft(lbl);
-                            double t = System.Windows.Controls.Canvas.GetTop(lbl);
-                            if (Math.Abs(l - (left + 8)) < 2 && Math.Abs(t - (top + 4)) < 2)
-                            {
-                                System.Windows.Controls.Canvas.SetLeft(lbl, l + dx);
-                                System.Windows.Controls.Canvas.SetTop(lbl, t + dy);
-                            }
-                        }
-                    }
-                }
                 _selectorDownPoint = pos;
                 e.Handled = true;
                 return;
             }
-        }
-        if (_currentTool == AnnotationTool.None && _isDragging && _selectedElement != null)
-        {
-            var pos = e.GetPosition(AnnotationCanvas);
-            double dx = pos.X - _dragStartPoint.X;
-            double dy = pos.Y - _dragStartPoint.Y;
-            _dragStartPoint = pos;
-            double left = System.Windows.Controls.Canvas.GetLeft(_selectedElement);
-            double top = System.Windows.Controls.Canvas.GetTop(_selectedElement);
-            if (double.IsNaN(left)) left = 0;
-            if (double.IsNaN(top)) top = 0;
-            System.Windows.Controls.Canvas.SetLeft(_selectedElement, left + dx);
-            System.Windows.Controls.Canvas.SetTop(_selectedElement, top + dy);
-            // Move paired label for step tool
-            if (_selectedElement is Ellipse)
-            {
-                foreach (var el in _annotations)
-                {
-                    if (el is TextBlock lbl)
-                    {
-                        double l = System.Windows.Controls.Canvas.GetLeft(lbl);
-                        double t = System.Windows.Controls.Canvas.GetTop(lbl);
-                        if (Math.Abs(l - (left + 8)) < 2 && Math.Abs(t - (top + 4)) < 2)
-                        {
-                            System.Windows.Controls.Canvas.SetLeft(lbl, l + dx);
-                            System.Windows.Controls.Canvas.SetTop(lbl, t + dy);
-                        }
-                    }
-                }
-            }
-            e.Handled = true;
-            return;
         }
         if (e.LeftButton != MouseButtonState.Pressed) return;
         if (_currentTool == AnnotationTool.Rectangle && _currentShape is System.Windows.Shapes.Rectangle rect)
@@ -394,9 +367,7 @@ public partial class MainWindow : Window
         else if (_currentTool == AnnotationTool.Arrow && _currentArrow != null)
         {
             var pos = e.GetPosition(AnnotationCanvas);
-            _currentArrow.X2 = pos.X;
-            _currentArrow.Y2 = pos.Y;
-            DrawArrowHead(_currentArrow);
+            UpdateArrowGeometry(_currentArrow, _startPoint, pos);
         }
         else if (_currentTool == AnnotationTool.Line && _currentLine != null)
         {
@@ -439,13 +410,20 @@ public partial class MainWindow : Window
         if (_currentTool == AnnotationTool.None)
         {
             AnnotationCanvas.ReleaseMouseCapture();
-            if (!_selectorDragStarted && _selectorDownElement is TextBlock tb && _annotations.Contains(tb))
+            if (_selectorDragStarted && _selectedElement != null)
             {
-                ConvertTextBlockToTextBox(tb);
+                var movedElement = _selectedElement;
+                var before = _elementPositionBeforeDrag;
+                var after = GetElementPosition(movedElement);
+                if (before != after)
+                {
+                    PushHistory(new HistoryEntry(
+                        () => SetElementPosition(movedElement, before),
+                        () => SetElementPosition(movedElement, after)));
+                }
             }
             _selectorDownElement = null;
             _selectorDragStarted = false;
-            _isDragging = false;
             return;
         }
         if (_currentTool == AnnotationTool.Rectangle && _currentShape != null)
@@ -486,42 +464,28 @@ public partial class MainWindow : Window
         }
     }
 
-    // Draws an arrowhead at the end of a line
-    private void DrawArrowHead(Line line)
+    private static void UpdateArrowGeometry(
+        System.Windows.Shapes.Path arrow,
+        System.Windows.Point start,
+        System.Windows.Point end)
     {
-        // Remove any previous arrowhead
-        var toRemove = new List<UIElement>();
-        foreach (var child in AnnotationCanvas.Children)
-        {
-            if (child is Polygon poly && poly.Tag == line)
-                toRemove.Add(poly);
-        }
-        foreach (var el in toRemove)
-        {
-            AnnotationCanvas.Children.Remove(el);
-            _annotations.Remove(el);
-        }
+        double theta = Math.Atan2(end.Y - start.Y, end.X - start.X);
+        const double arrowLength = 16;
+        const double arrowAngle = Math.PI / 7;
+        var point1 = new System.Windows.Point(
+            end.X - arrowLength * Math.Cos(theta - arrowAngle),
+            end.Y - arrowLength * Math.Sin(theta - arrowAngle));
+        var point2 = new System.Windows.Point(
+            end.X - arrowLength * Math.Cos(theta + arrowAngle),
+            end.Y - arrowLength * Math.Sin(theta + arrowAngle));
 
-        // Calculate arrowhead points
-        double theta = Math.Atan2(line.Y2 - line.Y1, line.X2 - line.X1);
-        double arrowLen = 16;
-        double angle = Math.PI / 7;
-        var pt1 = new System.Windows.Point(
-            line.X2 - arrowLen * Math.Cos(theta - angle),
-            line.Y2 - arrowLen * Math.Sin(theta - angle));
-        var pt2 = new System.Windows.Point(
-            line.X2 - arrowLen * Math.Cos(theta + angle),
-            line.Y2 - arrowLen * Math.Sin(theta + angle));
-        var arrowHead = new Polygon
-        {
-            Points = new PointCollection { new System.Windows.Point(line.X2, line.Y2), pt1, pt2 },
-            Fill = System.Windows.Media.Brushes.Red,
-            Stroke = System.Windows.Media.Brushes.Red,
-            StrokeThickness = 2,
-            Tag = line
-        };
-        AnnotationCanvas.Children.Add(arrowHead);
-        _annotations.Add(arrowHead);
+        var geometry = new GeometryGroup();
+        geometry.Children.Add(new LineGeometry(start, end));
+        var head = new PathFigure { StartPoint = end, IsClosed = true, IsFilled = true };
+        head.Segments.Add(new LineSegment(point1, true));
+        head.Segments.Add(new LineSegment(point2, true));
+        geometry.Children.Add(new PathGeometry([head]));
+        arrow.Data = geometry;
     }
 
     private void BtnUndo_Click(object sender, RoutedEventArgs e) => Undo();
@@ -530,65 +494,35 @@ public partial class MainWindow : Window
     private void Undo()
     {
         if (_undoStack.Count == 0) return;
-        var (action, element, extra) = _undoStack.Pop();
-        if (action == "add" && element != null)
-        {
-            RemoveElementVisuals(element);
-            _redoStack.Push(("add", element, null));
-        }
-        else if (action == "delete" && element != null)
-        {
-            RestoreElementVisuals(element);
-            _redoStack.Push(("delete", element, null));
-        }
-        else if (action == "crop")
-        {
-            var prevBmp = extra as Bitmap;
-            if (prevBmp != null)
-            {
-                ScreenshotImage.Source = BitmapToImageSource(prevBmp);
-                _lastScreenshot?.Dispose();
-                _lastScreenshot = new Bitmap(prevBmp);
-                AnnotationCanvas.Children.Clear();
-                _annotations.Clear();
-            }
-            _redoStack.Clear();
-        }
+        var entry = _undoStack.Pop();
+        entry.Undo();
+        _redoStack.Push(entry);
     }
 
     private void Redo()
     {
         if (_redoStack.Count == 0) return;
-        var (action, element, extra) = _redoStack.Pop();
-        if (action == "add" && element != null)
-        {
-            RestoreElementVisuals(element);
-            _undoStack.Push(("add", element, null));
-        }
-        else if (action == "delete" && element != null)
-        {
-            RemoveElementVisuals(element);
-            _undoStack.Push(("delete", element, null));
-        }
+        var entry = _redoStack.Pop();
+        entry.Redo();
+        _undoStack.Push(entry);
+    }
+
+    private void PushHistory(HistoryEntry entry)
+    {
+        _undoStack.Push(entry);
+        ClearHistory(_redoStack);
+    }
+
+    private static void ClearHistory(Stack<HistoryEntry> history)
+    {
+        while (history.TryPop(out var entry))
+            entry.Dispose();
     }
 
     private void RemoveElementVisuals(UIElement element)
     {
         AnnotationCanvas.Children.Remove(element);
         _annotations.Remove(element);
-
-        if (element is Line line && _arrowLines.Contains(line))
-        {
-            var arrowHeads = _annotations
-                .OfType<Polygon>()
-                .Where(polygon => ReferenceEquals(polygon.Tag, line))
-                .ToList();
-            foreach (var arrowHead in arrowHeads)
-            {
-                AnnotationCanvas.Children.Remove(arrowHead);
-                _annotations.Remove(arrowHead);
-            }
-        }
     }
 
     private void RestoreElementVisuals(UIElement element)
@@ -597,24 +531,47 @@ public partial class MainWindow : Window
             AnnotationCanvas.Children.Add(element);
         if (!_annotations.Contains(element))
             _annotations.Add(element);
-
-        if (element is Line line && _arrowLines.Contains(line))
-            DrawArrowHead(line);
     }
 
     private void AddAnnotation(UIElement element)
     {
         AnnotationCanvas.Children.Add(element);
         _annotations.Add(element);
-        _undoStack.Push(("add", element, null));
-        _redoStack.Clear();
+        PushHistory(new HistoryEntry(
+            () => RemoveElementVisuals(element),
+            () => RestoreElementVisuals(element)));
     }
 
     private void RemoveAnnotation(UIElement element)
     {
         RemoveElementVisuals(element);
-        _undoStack.Push(("delete", element, null));
-        _redoStack.Clear();
+        PushHistory(new HistoryEntry(
+            () => RestoreElementVisuals(element),
+            () => RemoveElementVisuals(element)));
+    }
+
+    private static System.Windows.Point GetElementPosition(UIElement element)
+    {
+        var left = System.Windows.Controls.Canvas.GetLeft(element);
+        var top = System.Windows.Controls.Canvas.GetTop(element);
+        return new System.Windows.Point(double.IsNaN(left) ? 0 : left, double.IsNaN(top) ? 0 : top);
+    }
+
+    private static void SetElementPosition(UIElement element, System.Windows.Point position)
+    {
+        System.Windows.Controls.Canvas.SetLeft(element, position.X);
+        System.Windows.Controls.Canvas.SetTop(element, position.Y);
+    }
+
+    private UIElement? FindAnnotationElement(DependencyObject? hit)
+    {
+        while (hit != null && !ReferenceEquals(hit, AnnotationCanvas))
+        {
+            if (hit is UIElement element && _annotations.Contains(element))
+                return element;
+            hit = VisualTreeHelper.GetParent(hit);
+        }
+        return null;
     }
 
     public MainWindow()
@@ -626,7 +583,12 @@ public partial class MainWindow : Window
         AnnotationCanvas.KeyDown += AnnotationCanvas_KeyDown;
         AnnotationCanvas.Focusable = true;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
-        Closed += (_, _) => _lastScreenshot?.Dispose();
+        Closed += (_, _) =>
+        {
+            _lastScreenshot?.Dispose();
+            ClearHistory(_undoStack);
+            ClearHistory(_redoStack);
+        };
     }
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -652,19 +614,31 @@ public partial class MainWindow : Window
         }
         if (_currentTool == AnnotationTool.Crop && _cropRectOverlay != null && e.Key == Key.Enter)
         {
-            // Perform crop
             double x = System.Windows.Controls.Canvas.GetLeft(_cropRectOverlay);
             double y = System.Windows.Controls.Canvas.GetTop(_cropRectOverlay);
             double w = _cropRectOverlay.Width;
             double h = _cropRectOverlay.Height;
-            // Push current image to undo stack before cropping
             if (_lastScreenshot != null)
             {
-                var bmpCopy = new Bitmap(_lastScreenshot);
-                _undoStack.Push(("crop", null, bmpCopy));
-                _redoStack.Clear();
+                using var cropped = CreateCroppedBitmap(x, y, w, h);
+                if (cropped != null)
+                {
+                    var before = new Bitmap(_lastScreenshot);
+                    var after = new Bitmap(cropped);
+                    var annotationsBefore = _annotations.ToList();
+                    ApplyScreenshot(after);
+                    PushHistory(new HistoryEntry(
+                        () =>
+                        {
+                            ApplyScreenshot(before);
+                            RestoreAnnotationSet(annotationsBefore);
+                        },
+                        () => ApplyScreenshot(after),
+                        before,
+                        after));
+                    CopyScreenshotToClipboard();
+                }
             }
-            CropImageToRect(x, y, w, h);
             AnnotationCanvas.Children.Remove(_cropRectOverlay);
             _cropRectOverlay = null;
             _currentTool = AnnotationTool.None;
@@ -707,6 +681,10 @@ public partial class MainWindow : Window
                     CopyScreenshotToClipboard();
                 }
             }
+            catch (Exception ex)
+            {
+                ShowError("capture the selected area", ex);
+            }
             finally
             {
                 Show();
@@ -725,6 +703,10 @@ public partial class MainWindow : Window
                 SetScreenshot(CaptureFullScreenDpiAware());
                 CopyScreenshotToClipboard();
             }
+            catch (Exception ex)
+            {
+                ShowError("capture the screen", ex);
+            }
             finally
             {
                 Show();
@@ -736,22 +718,46 @@ public partial class MainWindow : Window
     private void BtnSave_Click(object sender, RoutedEventArgs e)
     {
         if (_lastScreenshot == null) return;
-        var dialog = new SaveFileDialog
+        try
         {
-            Filter = "PNG Image|*.png",
-            FileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png"
-        };
-        if (dialog.ShowDialog() == true)
+            var dialog = new SaveFileDialog
+            {
+                Filter = "PNG Image|*.png",
+                FileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png"
+            };
+            if (dialog.ShowDialog() == true)
+            {
+                using var composite = CreateCompositeBitmap();
+                composite.Save(dialog.FileName, System.Drawing.Imaging.ImageFormat.Png);
+            }
+        }
+        catch (Exception ex)
         {
-            using var composite = CreateCompositeBitmap();
-            composite.Save(dialog.FileName, System.Drawing.Imaging.ImageFormat.Png);
+            ShowError("save the screenshot", ex);
         }
     }
 
     private void BtnCopy_Click(object sender, RoutedEventArgs e)
     {
         if (_lastScreenshot == null) return;
-        CopyScreenshotToClipboard();
+        try
+        {
+            CopyScreenshotToClipboard();
+        }
+        catch (Exception ex)
+        {
+            ShowError("copy the screenshot", ex);
+        }
+    }
+
+    private void ShowError(string action, Exception exception)
+    {
+        MessageBox.Show(
+            this,
+            $"ScreenShottr could not {action}.\n\n{exception.Message}",
+            "ScreenShottr",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
     }
 
     private void SetScreenshot(Bitmap bitmap)
@@ -761,11 +767,27 @@ public partial class MainWindow : Window
         ScreenshotImage.Source = BitmapToImageSource(bitmap);
         AnnotationCanvas.Children.Clear();
         _annotations.Clear();
-        _arrowLines.Clear();
-        _undoStack.Clear();
-        _redoStack.Clear();
+        ClearHistory(_undoStack);
+        ClearHistory(_redoStack);
         DeselectElement();
         _stepCounter = 1;
+    }
+
+    private void ApplyScreenshot(Bitmap bitmap)
+    {
+        _lastScreenshot?.Dispose();
+        _lastScreenshot = new Bitmap(bitmap);
+        ScreenshotImage.Source = BitmapToImageSource(_lastScreenshot);
+        AnnotationCanvas.Children.Clear();
+        _annotations.Clear();
+        DeselectElement();
+        _stepCounter = 1;
+    }
+
+    private void RestoreAnnotationSet(IEnumerable<UIElement> annotations)
+    {
+        foreach (var annotation in annotations)
+            RestoreElementVisuals(annotation);
     }
 
     private Bitmap CreateCompositeBitmap()
@@ -808,29 +830,12 @@ public partial class MainWindow : Window
     }
 
     // --- Screenshot helpers ---
-    private Bitmap CaptureScreen()
-    {
-        int width = (int)SystemParameters.VirtualScreenWidth;
-        int height = (int)SystemParameters.VirtualScreenHeight;
-        int left = (int)SystemParameters.VirtualScreenLeft;
-        int top = (int)SystemParameters.VirtualScreenTop;
-        var bmp = new Bitmap(width, height);
-        using (var g = Graphics.FromImage(bmp))
-        {
-            g.CopyFromScreen(left, top, 0, 0, bmp.Size);
-        }
-        return bmp;
-    }
-
     private Bitmap CaptureScreenRegion(System.Drawing.Rectangle region)
     {
-        // Adjust for virtual screen origin (handles negative coordinates for multi-monitor)
-        int absX = region.X + (int)SystemParameters.VirtualScreenLeft;
-        int absY = region.Y + (int)SystemParameters.VirtualScreenTop;
         var bmp = new Bitmap(region.Width, region.Height);
         using (var g = Graphics.FromImage(bmp))
         {
-            g.CopyFromScreen(absX, absY, 0, 0, new System.Drawing.Size(region.Width, region.Height));
+            g.CopyFromScreen(region.X, region.Y, 0, 0, new System.Drawing.Size(region.Width, region.Height));
         }
         return bmp;
     }
@@ -851,29 +856,14 @@ public partial class MainWindow : Window
 
     private Bitmap CaptureFullScreenDpiAware()
     {
-        // Get the virtual screen bounds in physical pixels
-        int left = (int)SystemParameters.VirtualScreenLeft;
-        int top = (int)SystemParameters.VirtualScreenTop;
-        int width = (int)SystemParameters.VirtualScreenWidth;
-        int height = (int)SystemParameters.VirtualScreenHeight;
-
-        // Get system DPI (assume primary screen for simplicity)
-        var source = PresentationSource.FromVisual(this);
-        double dpiX = 1.0, dpiY = 1.0;
-        if (source != null)
-        {
-            dpiX = source.CompositionTarget.TransformToDevice.M11;
-            dpiY = source.CompositionTarget.TransformToDevice.M22;
-        }
-        int pxLeft = (int)(left * dpiX);
-        int pyTop = (int)(top * dpiY);
-        int pxWidth = (int)(width * dpiX);
-        int pyHeight = (int)(height * dpiY);
-
-        var bmp = new Bitmap(pxWidth, pyHeight);
+        int left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        var bmp = new Bitmap(width, height);
         using (var g = Graphics.FromImage(bmp))
         {
-            g.CopyFromScreen(pxLeft, pyTop, 0, 0, new System.Drawing.Size(pxWidth, pyHeight));
+            g.CopyFromScreen(left, top, 0, 0, new System.Drawing.Size(width, height));
         }
         return bmp;
     }
@@ -884,6 +874,14 @@ public partial class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
+
+    private const int SM_XVIRTUALSCREEN = 76;
+    private const int SM_YVIRTUALSCREEN = 77;
+    private const int SM_CXVIRTUALSCREEN = 78;
+    private const int SM_CYVIRTUALSCREEN = 79;
 
     private struct RECT
     {
@@ -957,92 +955,67 @@ public partial class MainWindow : Window
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DeleteObject(IntPtr hObject);
 
-    private void ConvertTextBoxToTextBlock(TextBox textBox)
+    private void BeginTextEdit(TextBox textBox)
     {
-        if (!AnnotationCanvas.Children.Contains(textBox)) return;
-        var text = textBox.Text.Trim();
-        var left = System.Windows.Controls.Canvas.GetLeft(textBox);
-        var top = System.Windows.Controls.Canvas.GetTop(textBox);
-        AnnotationCanvas.Children.Remove(textBox);
-        _annotations.Remove(textBox);
-        if (string.IsNullOrEmpty(text))
-            return;
-
-        var textBlock = new TextBlock
-        {
-            Text = text,
-            FontSize = 18,
-            Foreground = System.Windows.Media.Brushes.Black,
-            FontWeight = FontWeights.Bold
-        };
-        System.Windows.Controls.Canvas.SetLeft(textBlock, left);
-        System.Windows.Controls.Canvas.SetTop(textBlock, top);
-        textBlock.MouseLeftButtonDown += (s, e) =>
-        {
-            if (e.ClickCount == 2)
-            {
-                ConvertTextBlockToTextBox(textBlock);
-                e.Handled = true;
-            }
-        };
-        AnnotationCanvas.Children.Add(textBlock);
-        _annotations.Add(textBlock);
-    }
-
-    private void ConvertTextBlockToTextBox(TextBlock textBlock)
-    {
-        if (!AnnotationCanvas.Children.Contains(textBlock)) return;
-        var text = textBlock.Text;
-        var left = System.Windows.Controls.Canvas.GetLeft(textBlock);
-        var top = System.Windows.Controls.Canvas.GetTop(textBlock);
-        AnnotationCanvas.Children.Remove(textBlock);
-        _annotations.Remove(textBlock);
-        var textBox = new TextBox
-        {
-            Text = text,
-            FontSize = 18,
-            Foreground = System.Windows.Media.Brushes.Black,
-            FontWeight = FontWeights.Bold,
-            BorderThickness = new Thickness(0),
-            Background = System.Windows.Media.Brushes.Transparent,
-            MinWidth = 40
-        };
-        System.Windows.Controls.Canvas.SetLeft(textBox, left);
-        System.Windows.Controls.Canvas.SetTop(textBox, top);
-        textBox.LostFocus += (s, ev) => ConvertTextBoxToTextBlock(textBox);
-        textBox.KeyDown += (s, ev) => { if (ev.Key == Key.Enter) ConvertTextBoxToTextBlock(textBox); };
-        AnnotationCanvas.Children.Add(textBox);
-        _annotations.Add(textBox);
+        textBox.Tag = textBox.Text;
+        textBox.IsReadOnly = false;
+        textBox.Focusable = true;
         textBox.Focus();
         textBox.SelectAll();
     }
 
-    private void CropImageToRect(double x, double y, double w, double h)
+    private void CommitTextEdit(TextBox textBox)
     {
-        if (_lastScreenshot == null) return;
+        if (!AnnotationCanvas.Children.Contains(textBox))
+            return;
+
+        var before = textBox.Tag as string ?? textBox.Text;
+        var after = textBox.Text.Trim();
+        if (string.IsNullOrEmpty(after))
+        {
+            RemoveAnnotation(textBox);
+            return;
+        }
+
+        textBox.Text = after;
+        textBox.Tag = after;
+        textBox.IsReadOnly = true;
+        textBox.Focusable = false;
+        if (!string.Equals(before, after, StringComparison.Ordinal))
+        {
+            PushHistory(new HistoryEntry(
+                () =>
+                {
+                    textBox.Text = before;
+                    textBox.Tag = before;
+                },
+                () =>
+                {
+                    textBox.Text = after;
+                    textBox.Tag = after;
+                }));
+        }
+    }
+
+    private Bitmap? CreateCroppedBitmap(double x, double y, double w, double h)
+    {
+        if (_lastScreenshot == null) return null;
         int bmpW = (int)AnnotationCanvas.ActualWidth;
         int bmpH = (int)AnnotationCanvas.ActualHeight;
-        if (bmpW <= 0 || bmpH <= 0) return;
+        if (bmpW <= 0 || bmpH <= 0) return null;
 
-        double scaleX = _lastScreenshot.Width / (double)bmpW;
-        double scaleY = _lastScreenshot.Height / (double)bmpH;
-        int px = Math.Clamp((int)(x * scaleX), 0, _lastScreenshot.Width - 1);
-        int py = Math.Clamp((int)(y * scaleY), 0, _lastScreenshot.Height - 1);
-        int pw = Math.Min((int)(w * scaleX), _lastScreenshot.Width - px);
-        int ph = Math.Min((int)(h * scaleY), _lastScreenshot.Height - py);
-        if (pw <= 0 || ph <= 0) return;
-        var cropped = new Bitmap(pw, ph);
+        var crop = CaptureGeometry.ProjectCrop(
+            x, y, w, h, bmpW, bmpH, _lastScreenshot.Width, _lastScreenshot.Height);
+        if (crop.IsEmpty) return null;
+        var cropped = new Bitmap(crop.Width, crop.Height);
         using (var g = Graphics.FromImage(cropped))
         {
-            g.DrawImage(_lastScreenshot, new System.Drawing.Rectangle(0, 0, pw, ph), new System.Drawing.Rectangle(px, py, pw, ph), GraphicsUnit.Pixel);
+            g.DrawImage(
+                _lastScreenshot,
+                new System.Drawing.Rectangle(0, 0, crop.Width, crop.Height),
+                crop,
+                GraphicsUnit.Pixel);
         }
-        _lastScreenshot.Dispose();
-        _lastScreenshot = cropped;
-        ScreenshotImage.Source = BitmapToImageSource(cropped);
-        AnnotationCanvas.Children.Clear();
-        _annotations.Clear();
-        _arrowLines.Clear();
-        DeselectElement();
-        CopyScreenshotToClipboard();
+        return cropped;
     }
 }

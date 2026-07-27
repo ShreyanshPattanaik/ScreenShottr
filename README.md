@@ -1,41 +1,69 @@
-# ShottrClone
+# ScreenShottr
 
+A Windows screenshot and annotation tool inspired by the speed and precision of Shottr
+for macOS.
 
-A modern, feature-rich Windows screenshot and annotation tool inspired by Shottr for macOS.
+## Current features
 
-## Features
-- Area, window, and full screen capture
-- Scrolling screenshots
-- Delayed and repeat capture
-- Powerful annotation tools (text, arrows, shapes, freehand, highlighter, spotlight, step counter)
-- Privacy tools (pixelate, blur, erase, text-only blur/erase)
-- Image manipulation (crop, resize, combine, overlays, rasterize)
-- Developer tools (screen ruler, color picker, magnifier, guides, auto-padding, OKLCH, APCA)
-- Productivity (OCR, QR code, pinned screenshots, hotkeys, undo/redo, auto copy/save, customizable file naming)
-- System integration (sharing, clipboard, open files)
-- Beautiful, customizable UI (themes, toolbar layout)
+- Area capture across the virtual desktop
+- Full-screen capture
+- Automatic clipboard copy after capture
+- PNG Save As
+- Rectangle, oval, line, arrow, text, freehand, highlighter, and step annotations
+- Crop with `Enter` to confirm
+- Select, move, edit, and delete annotations
+- Undo and redo for annotation creation, deletion, movement, text edits, and crop
+- Per-monitor-V2 DPI awareness
+- Visible error messages when capture, copy, or save fails
 
-## Tech Stack
-- C# with WPF (.NET 9)
-- SkiaSharp (image editing)
-- Tesseract.NET (OCR)
-- ZXing.NET (QR code)
-- CommunityToolkit.Mvvm (MVVM)
+Window selection and early scrolling-capture helper code exist, but those workflows are
+not yet exposed as finished features.
 
-## Getting Started
-1. Install [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
-2. Clone this repo
-3. Run `dotnet restore` and `dotnet run` in the ShottrClone directory
+## Planned features
 
-## Roadmap
-- [ ] Core screenshot features
-- [ ] Annotation tools
-- [ ] Privacy tools
-- [ ] Image manipulation
-- [ ] Productivity features
-- [ ] System integration
-- [ ] UI polish and customization
+The detailed feature inventory and phased roadmap are in
+[PRODUCT_FEATURES_AND_PHASE_PLAN.md](PRODUCT_FEATURES_AND_PHASE_PLAN.md).
 
----
+Near-term work includes:
 
-This project is a work in progress and aims to provide a best-in-class screenshot experience for Windows users. 
+- Window capture
+- Notification-area controls and global hotkeys
+- Repeat-area and delayed capture
+- Capture preview, auto-save, and persistent settings
+- A production-quality annotation editor
+
+OCR, QR recognition, privacy tools, pinned screenshots, scrolling capture, sharing, and
+automation are later phases and are not currently implemented.
+
+## Technology
+
+- C# and WPF
+- .NET 9 for Windows
+- `System.Drawing.Common` for the current bitmap capture and compositing layer
+
+## Run
+
+1. Install the .NET 9 SDK.
+2. Clone the repository.
+3. Run:
+
+   ```powershell
+   dotnet restore
+   dotnet run
+   ```
+
+## Validation
+
+Build the application:
+
+```powershell
+dotnet build --no-restore
+```
+
+Run the dependency-free Phase 0 geometry checks:
+
+```powershell
+dotnet run --project tests/ShottrClone.PhaseZeroChecks.csproj
+```
+
+This project is under active development.
