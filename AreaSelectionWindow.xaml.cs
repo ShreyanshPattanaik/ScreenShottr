@@ -61,25 +61,17 @@ namespace ShottrClone
             double w = Math.Abs(_startPoint.X - _endPoint.X);
             double h = Math.Abs(_startPoint.Y - _endPoint.Y);
 
-            // Convert DIPs to physical pixels
-            var source = PresentationSource.FromVisual(this);
-            double dpiX = 1.0, dpiY = 1.0;
-            if (source != null)
-            {
-                dpiX = source.CompositionTarget.TransformToDevice.M11;
-                dpiY = source.CompositionTarget.TransformToDevice.M22;
-            }
-            int px = (int)(x * dpiX);
-            int py = (int)(y * dpiY);
-            int pw = (int)(w * dpiX);
-            int ph = (int)(h * dpiY);
-            if (pw < 1 || ph < 1)
+            // PointToScreen lets WPF apply the correct per-monitor DPI conversion.
+            var first = PointToScreen(new System.Windows.Point(x, y));
+            var second = PointToScreen(new System.Windows.Point(x + w, y + h));
+            var physicalRegion = CaptureGeometry.FromScreenPoints(first, second);
+            if (physicalRegion.Width < 1 || physicalRegion.Height < 1)
             {
                 SelectionRectangle.Visibility = Visibility.Collapsed;
                 return;
             }
 
-            SelectedRegion = new System.Drawing.Rectangle(px, py, pw, ph);
+            SelectedRegion = physicalRegion;
             DialogResult = true;
             Close();
         }
