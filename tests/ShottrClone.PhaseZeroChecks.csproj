@@ -11,5 +11,6 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="..\CaptureGeometry.cs" Link="CaptureGeometry.cs" />
+    <Compile Include="..\CaptureFileNaming.cs" Link="CaptureFileNaming.cs" />
   </ItemGroup>
 </Project>

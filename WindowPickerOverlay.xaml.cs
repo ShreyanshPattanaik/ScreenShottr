@@ -7,6 +7,11 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using KeyEventArgs = System.Windows.Input.KeyEventArgs;
+using MouseEventArgs = System.Windows.Input.MouseEventArgs;
+using Rectangle = System.Windows.Shapes.Rectangle;
+using Brushes = System.Windows.Media.Brushes;
+using Color = System.Windows.Media.Color;
 
 namespace ShottrClone
 {
@@ -47,11 +52,11 @@ namespace ShottrClone
                 if (pid == Process.GetCurrentProcess().Id) return true;
                 GetWindowRect(hWnd, out RECT rect);
                 if (rect.Right - rect.Left < 50 || rect.Bottom - rect.Top < 50) return true; // skip tiny windows
+                var topLeft = PointFromScreen(new System.Windows.Point(rect.Left, rect.Top));
+                var bottomRight = PointFromScreen(new System.Windows.Point(rect.Right, rect.Bottom));
                 var r = new Rect(
-                    rect.Left - SystemParameters.VirtualScreenLeft,
-                    rect.Top - SystemParameters.VirtualScreenTop,
-                    rect.Right - rect.Left,
-                    rect.Bottom - rect.Top);
+                    topLeft,
+                    bottomRight);
                 var shape = new Rectangle
                 {
                     Width = r.Width,

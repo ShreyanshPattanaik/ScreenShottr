@@ -25,6 +25,22 @@ Check(
     CaptureGeometry.ProjectCrop(0, 0, 10, 10, 0, 100, 100, 100),
     Rectangle.Empty);
 
+CheckText(
+    "formats filename tokens",
+    CaptureFileNaming.BuildFileName(
+        "Capture_{date}_{time}",
+        new DateTime(2026, 7, 27, 18, 5, 9),
+        "png"),
+    "Capture_20260727_180509.png");
+
+CheckText(
+    "normalizes JPEG extension",
+    CaptureFileNaming.BuildFileName(
+        "Screenshot_{timestamp}.png",
+        new DateTime(2026, 7, 27, 18, 5, 9),
+        "jpg"),
+    "Screenshot_20260727_180509.jpg");
+
 if (failures.Count > 0)
 {
     Console.Error.WriteLine("Phase 0 checks failed:");
@@ -33,11 +49,17 @@ if (failures.Count > 0)
     return 1;
 }
 
-Console.WriteLine("Phase 0 geometry checks passed (4/4).");
+Console.WriteLine("Capture reliability checks passed (6/6).");
 return 0;
 
 void Check(string name, Rectangle actual, Rectangle expected)
 {
     if (actual != expected)
+        failures.Add($"{name}: expected {expected}, got {actual}");
+}
+
+void CheckText(string name, string actual, string expected)
+{
+    if (!string.Equals(actual, expected, StringComparison.Ordinal))
         failures.Add($"{name}: expected {expected}, got {actual}");
 }
