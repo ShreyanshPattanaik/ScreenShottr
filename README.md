@@ -1,5 +1,6 @@
 # ShottrClone
 
+
 A modern, feature-rich Windows screenshot and annotation tool inspired by Shottr for macOS.
 
 ## Features
